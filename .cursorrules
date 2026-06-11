@@ -1,0 +1,166 @@
+# AI Agent Rules for gitsearch
+
+You have access to `gitsearch`, a CLI tool that searches GitHub for production code examples and bug solutions.
+
+## Quick Reference
+
+```bash
+# Find code examples
+gitsearch code -q "language:<lang> <framework> <feature>" --limit 2 --min-stars 100
+
+# Find bug solutions
+gitsearch issues -q "<error-message> <context>" --state closed --limit 2
+```
+
+## When to Use
+
+### Use gitsearch code when:
+- User asks "How do I implement X?" and it's non-trivial
+- You need real-world examples of library/API usage
+- Implementing: auth, payments, WebSockets, complex UI, advanced framework features
+- Language-specific patterns you're uncertain about
+- Niche/advanced techniques (performance, security, animations)
+
+### Use gitsearch issues when:
+- User reports a specific error message
+- Debugging framework/build tool issues
+- Configuration problems (Docker, webpack, CI/CD)
+- "How to fix [specific error]?"
+
+### DON'T use when:
+- Question is trivial (basic CSS, simple functions)
+- You have high confidence in the solution
+- Too generic to search effectively ("make it better")
+
+## Query Construction
+
+### Code Search Pattern
+```
+language:<lang> <framework-name> <library> <feature-keywords>
+```
+
+**Examples:**
+```bash
+# Good
+gitsearch code -q "language:typescript nextjs middleware auth jwt" --limit 2 --min-stars 150
+gitsearch code -q "language:go chi router middleware" --limit 2 --min-stars 100
+gitsearch code -q "language:python fastapi sqlalchemy async" --limit 2 --min-stars 100
+
+# Bad (too generic)
+gitsearch code -q "authentication" --limit 2
+```
+
+**Key rules:**
+- ALWAYS include `language:<lang>` qualifier
+- Add framework/library name (react, fastapi, django, express, nextjs)
+- Use 2-4 specific keywords
+- Set `--min-stars 50-200` (higher for popular frameworks)
+- Keep `--limit 1-3` to avoid token waste
+
+### Issue Search Pattern
+```
+"<exact-error-message>" <technology> <context-words>
+```
+
+**Examples:**
+```bash
+gitsearch issues -q "EADDRINUSE" --state closed --limit 2
+gitsearch issues -q 'react "Cannot read property" setState' --state closed --limit 2
+gitsearch issues -q "prisma migration failed" --state closed --limit 3
+```
+
+**Key rules:**
+- Quote exact error messages for precision
+- Use `--state closed` (finds solved issues)
+- Include framework/tool name
+- Keep `--limit 2-3`
+
+## Execution Workflow
+
+1. **Detect trigger**: Does user need code example or error solution?
+2. **Extract keywords**: Language, framework, feature/error
+3. **Build query**: Use templates above
+4. **Execute**: Run gitsearch with appropriate flags
+5. **Parse results**: Read code/solutions from Markdown output
+6. **Adapt**: Translate to user's context (don't copy-paste blindly)
+7. **Explain**: Show adapted code + explain how it works
+
+## Token Efficiency
+
+- Default to `--limit 1` or `--limit 2` (only go to 3 if comparing approaches)
+- Use `--min-stars 100+` for quality filtering
+- Precise queries = better results = fewer tokens
+- If first result is good, don't search again
+
+## Error Handling
+
+| Error | Action |
+|-------|--------|
+| `GITHUB_TOKEN not set` | Tell user: `export GITHUB_TOKEN=your_token` (get at github.com/settings/tokens) |
+| `Rate limit exceeded` | Note reset time, proceed with existing knowledge |
+| `No results found` | Broaden query or proceed without search |
+
+## Common Languages
+
+```
+language:typescript    language:javascript    language:python
+language:go           language:java          language:rust
+language:cpp          language:csharp        language:swift
+language:php          language:ruby          language:kotlin
+```
+
+## Decision Tree
+
+```
+User asks implementation question
+├─ Trivial/basic? → Answer directly (no search)
+├─ Involves external API/library? → gitsearch code
+├─ Advanced/niche technique? → gitsearch code
+└─ Generic question? → Answer directly
+
+User reports error
+├─ Specific error message? → gitsearch issues
+├─ Framework/build issue? → gitsearch issues
+└─ Generic problem? → Debug with user first
+
+User asks "how to fix X"
+└─ gitsearch issues -q "X" --state closed
+```
+
+## Real Examples
+
+**Scenario 1**: "How do I add Stripe payments to my Next.js app?"
+→ `gitsearch code -q "language:typescript nextjs stripe payment intent" --limit 2 --min-stars 150`
+
+**Scenario 2**: "Error: listen EADDRINUSE :::3000"
+→ `gitsearch issues -q "EADDRINUSE" --state closed --limit 2`
+
+**Scenario 3**: "How do I center a div?"
+→ DON'T search. Answer with CSS directly.
+
+**Scenario 4**: "How do I implement WebSocket reconnection logic?"
+→ `gitsearch code -q "language:typescript websocket reconnect retry" --limit 2 --min-stars 100`
+
+## Prerequisites Check
+
+Before executing, verify:
+- Is gitsearch in PATH? (it should be in this project)
+- Is GITHUB_TOKEN set? (if not, first command will fail with clear error)
+
+## After Getting Results
+
+1. **Identify relevant pattern** from returned code/solution
+2. **Adapt to user's context** (file structure, naming, existing code)
+3. **Explain the approach** and why it works
+4. **Credit source** if directly referencing ("Based on pattern from X repo")
+5. **Keep only relevant parts** - don't echo entire file contents back to user
+
+## Summary
+
+- **Trigger**: Non-trivial implementation OR specific error message
+- **Query**: `language:<lang> <framework> <feature>` OR `"<error>" <context>`
+- **Limits**: 1-3 results, 50-200 min stars
+- **Action**: Adapt results to user context, explain clearly
+- **Avoid**: Using for trivial questions or when you have high confidence
+
+Remember: gitsearch fetches REAL production code. Use it to learn patterns, not to copy-paste blindly.
