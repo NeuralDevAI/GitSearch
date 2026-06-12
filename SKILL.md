@@ -10,7 +10,6 @@ AI agent skill for fetching production-ready code examples and bug solutions fro
 
 ## Prerequisites
 
-- `gitsearch` binary must be in PATH or current directory
 - `GITHUB_TOKEN` environment variable must be set
 - If token missing, instruct user to set it: `export GITHUB_TOKEN=your_token`
 

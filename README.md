@@ -16,29 +16,36 @@ A high-performance, zero-LLM Go CLI utility that fetches production-ready code e
 
 ### Prerequisites
 
-- Go 1.21 or higher
+- Go 1.21 or higher (only required if building from source)
 - GitHub Personal Access Token
 
-### Build from Source
+### Global Installation (Recommended)
 
-```bash
-git clone <repository-url>
-cd gitsearch
-go build -o gitsearch
+To make `gitsearch` accessible globally from any folder in your terminal:
+
+#### Windows (PowerShell):
+Run the installer script:
+```powershell
+.\install.ps1
 ```
+*(This script will build using `go install` if Go is present, or copy the precompiled `gitsearch.exe` to a PATH folder).*
 
-### Cross-Platform Builds
-
+#### macOS / Linux:
+Run the installer script:
 ```bash
-# Linux
-GOOS=linux GOARCH=amd64 go build -o gitsearch-linux
-
-# macOS
-GOOS=darwin GOARCH=amd64 go build -o gitsearch-darwin
-
-# Windows
-GOOS=windows GOARCH=amd64 go build -o gitsearch.exe
+chmod +x install.sh
+./install.sh
 ```
+*(This script compiles via `go install` if Go is present, or copies the precompiled `gitsearch` binary to `~/.local/bin` and helps you add it to PATH).*
+
+### Manual Installation via Go
+
+You can install it directly using Go:
+```bash
+go install github.com/NeuralDevAI/GitSearch@latest
+```
+Make sure your Go binary directory (`$GOPATH/bin` or `~/go/bin`) is added to your shell's `PATH` environment variable.
+
 
 ## Setup
 
