@@ -3,6 +3,8 @@ package github
 import (
 	"context"
 	"fmt"
+	"os"
+	"sync"
 
 	"github.com/google/go-github/v62/github"
 )
@@ -45,42 +47,59 @@ func SearchIssues(ctx context.Context, client *github.Client, query string, stat
 		return []IssueResult{}, nil
 	}
 
-	var results []IssueResult
-	for i, issue := range result.Issues {
-		if i >= limit {
-			break
-		}
+	numIssues := len(result.Issues)
+	if numIssues > limit {
+		numIssues = limit
+	}
 
-		repoFullName := issue.GetRepository().GetFullName()
-		parts := splitRepoFullName(repoFullName)
-		if len(parts) != 2 {
-			continue
-		}
-		owner := parts[0]
-		repoName := parts[1]
+	results := make([]IssueResult, numIssues)
+	var wg sync.WaitGroup
 
-		topSolution := ""
-		if issue.GetComments() > 0 {
-			topSolution, _ = findTopSolution(ctx, client, owner, repoName, issue.GetNumber())
-		}
+	for i := 0; i < numIssues; i++ {
+		wg.Add(1)
+		go func(idx int, issue *github.Issue) {
+			defer wg.Done()
 
-		results = append(results, IssueResult{
-			Title:       issue.GetTitle(),
-			Number:      issue.GetNumber(),
-			Owner:       owner,
-			Repo:        repoName,
-			State:       issue.GetState(),
-			URL:         issue.GetHTMLURL(),
-			Body:        issue.GetBody(),
-			TopSolution: topSolution,
-		})
+			repoFullName := issue.GetRepository().GetFullName()
+			parts := splitRepoFullName(repoFullName)
+			if len(parts) != 2 {
+				return
+			}
+			owner := parts[0]
+			repoName := parts[1]
 
-		if len(results) >= limit {
-			break
+			topSolution := ""
+			if issue.GetComments() > 0 {
+				var err error
+				topSolution, err = findTopSolution(ctx, client, owner, repoName, issue.GetNumber())
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to fetch comments for issue #%d: %v\n", issue.GetNumber(), err)
+				}
+			}
+
+			results[idx] = IssueResult{
+				Title:       issue.GetTitle(),
+				Number:      issue.GetNumber(),
+				Owner:       owner,
+				Repo:        repoName,
+				State:       issue.GetState(),
+				URL:         issue.GetHTMLURL(),
+				Body:        issue.GetBody(),
+				TopSolution: topSolution,
+			}
+		}(i, result.Issues[i])
+	}
+
+	wg.Wait()
+
+	var finalResults []IssueResult
+	for _, r := range results {
+		if r.Title != "" {
+			finalResults = append(finalResults, r)
 		}
 	}
 
-	return results, nil
+	return finalResults, nil
 }
 
 func findTopSolution(ctx context.Context, client *github.Client, owner, repo string, issueNumber int) (string, error) {

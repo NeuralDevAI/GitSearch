@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/google/go-github/v62/github"
 )
@@ -19,6 +20,17 @@ type CodeResult struct {
 	URL        string
 	Content    string
 	Language   string
+}
+
+type codeJob struct {
+	index int
+	item  *github.CodeResult
+}
+
+type jobResult struct {
+	index int
+	res   *CodeResult
+	err   error
 }
 
 func SearchCode(ctx context.Context, client *github.Client, query string, limit, minStars int) ([]CodeResult, error) {
@@ -45,68 +57,151 @@ func SearchCode(ctx context.Context, client *github.Client, query string, limit,
 		return []CodeResult{}, nil
 	}
 
-	var results []CodeResult
-	repoCache := make(map[string]*github.Repository)
-	checked := 0
-	for _, item := range result.CodeResults {
-		if len(results) >= limit {
-			break
-		}
+	numItems := len(result.CodeResults)
+	// Process up to 50 items to keep rate limit usage reasonable
+	if numItems > 50 {
+		numItems = 50
+	}
 
-		checked++
-		owner := item.Repository.GetOwner().GetLogin()
-		repoName := item.Repository.GetName()
-		repoKey := fmt.Sprintf("%s/%s", owner, repoName)
+	var repoCache sync.Map // key: owner/repoName, value: *github.Repository
+	jobs := make(chan codeJob, numItems)
+	resultsChan := make(chan jobResult, numItems)
 
-		// Check cache first
-		fullRepo, ok := repoCache[repoKey]
-		if !ok {
-			// Fetch full repository info to get accurate star count
-			var err error
-			fullRepo, _, err = client.Repositories.Get(ctx, owner, repoName)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to fetch repo info for %s: %v\n", repoKey, err)
-				continue
+	workerCtx, cancelWorkers := context.WithCancel(ctx)
+	defer cancelWorkers()
+
+	numWorkers := 5
+	if numWorkers > numItems {
+		numWorkers = numItems
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case job, ok := <-jobs:
+					if !ok {
+						return
+					}
+
+					owner := job.item.Repository.GetOwner().GetLogin()
+					repoName := job.item.Repository.GetName()
+					repoKey := fmt.Sprintf("%s/%s", owner, repoName)
+
+					var fullRepo *github.Repository
+					if val, ok := repoCache.Load(repoKey); ok {
+						fullRepo = val.(*github.Repository)
+					} else {
+						var err error
+						fullRepo, _, err = client.Repositories.Get(workerCtx, owner, repoName)
+						if err != nil {
+							resultsChan <- jobResult{index: job.index, err: err}
+							continue
+						}
+						repoCache.Store(repoKey, fullRepo)
+					}
+
+					stars := fullRepo.GetStargazersCount()
+					if stars < minStars {
+						resultsChan <- jobResult{index: job.index} // Filtered out
+						continue
+					}
+
+					path := job.item.GetPath()
+					fileContent, _, _, err := client.Repositories.GetContents(workerCtx, owner, repoName, path, nil)
+					if err != nil {
+						resultsChan <- jobResult{index: job.index, err: err}
+						continue
+					}
+
+					content, err := fileContent.GetContent()
+					if err != nil {
+						resultsChan <- jobResult{index: job.index, err: err}
+						continue
+					}
+
+					language := detectLanguage(path)
+					resultsChan <- jobResult{
+						index: job.index,
+						res: &CodeResult{
+							Owner:     owner,
+							Repo:      repoName,
+							Path:      path,
+							Stars:     stars,
+							UpdatedAt: fullRepo.GetUpdatedAt().Format("2006-01-02"),
+							URL:       fileContent.GetHTMLURL(),
+							Content:   content,
+							Language:  language,
+						},
+					}
+				}
 			}
-			repoCache[repoKey] = fullRepo
+		}()
+	}
+
+	// Send all jobs
+	for i := 0; i < numItems; i++ {
+		jobs <- codeJob{
+			index: i,
+			item:  result.CodeResults[i],
 		}
+	}
+	close(jobs)
 
-		stars := fullRepo.GetStargazersCount()
+	// Monitor workers completion
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
 
-		if stars < minStars {
+	collected := make([]*CodeResult, numItems)
+	finished := make([]bool, numItems)
+
+	for jr := range resultsChan {
+		finished[jr.index] = true
+		if jr.err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to fetch details for %d: %v\n", jr.index, jr.err)
 			continue
 		}
-
-		path := item.GetPath()
-
-		fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repoName, path, nil)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to fetch content for %s/%s/%s: %v\n", owner, repoName, path, err)
-			continue
+		if jr.res != nil {
+			collected[jr.index] = jr.res
 		}
 
-		// Use DownloadContents which handles decoding automatically
-		content, err := fileContent.GetContent()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to get content for %s/%s/%s: %v\n", owner, repoName, path, err)
-			continue
+		// Check if we can stop early while preserving the top ranked results
+		validCount := 0
+		canStop := false
+		for idx, item := range collected {
+			if !finished[idx] {
+				break // Must wait for this higher-ranked result to finish
+			}
+			if item != nil {
+				validCount++
+				if validCount == limit {
+					canStop = true
+					break
+				}
+			}
 		}
 
-		language := detectLanguage(path)
-
-		results = append(results, CodeResult{
-			Owner:      owner,
-			Repo:       repoName,
-			Path:       path,
-			Stars:      stars,
-			UpdatedAt:  fullRepo.GetUpdatedAt().Format("2006-01-02"),
-			URL:        fileContent.GetHTMLURL(),
-			Content:    content,
-			Language:   language,
-		})
-
-		if len(results) >= limit {
+		if canStop {
+			cancelWorkers()
 			break
+		}
+	}
+
+	// Filter out nil elements and build final ordered results
+	var results []CodeResult
+	for _, item := range collected {
+		if item != nil {
+			results = append(results, *item)
+			if len(results) == limit {
+				break
+			}
 		}
 	}
 
