@@ -33,7 +33,7 @@ type jobResult struct {
 	err   error
 }
 
-func SearchCode(ctx context.Context, client *github.Client, query string, limit, minStars int) ([]CodeResult, error) {
+func SearchCode(ctx context.Context, client *github.Client, query string, limit, minStars int, snippet bool, contextLines int) ([]CodeResult, error) {
 	if err := CheckRateLimit(ctx, client); err != nil {
 		return nil, err
 	}
@@ -126,6 +126,10 @@ func SearchCode(ctx context.Context, client *github.Client, query string, limit,
 					}
 
 					language := detectLanguage(path)
+					if snippet {
+						content = ExtractSnippet(content, query, language, contextLines)
+					}
+
 					resultsChan <- jobResult{
 						index: job.index,
 						res: &CodeResult{

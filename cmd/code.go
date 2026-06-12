@@ -15,16 +15,18 @@ var (
 	codeQuery    string
 	codeLimit    int
 	codeMinStars int
+	codeSnippet  bool
+	codeContext  int
 )
 
 var codeCmd = &cobra.Command{
 	Use:   "code",
 	Short: "Search GitHub for code files",
 	Long: `Search GitHub repositories for code files matching specific keywords.
-Returns raw file contents in structured Markdown format.
+Returns raw file contents or hybrid snippets in structured Markdown format.
 
 Example:
-  gitsearch code -q "language:typescript stripe payment" -limit 2 -min-stars 100`,
+  gitsearch code -q "language:typescript stripe payment" -limit 2 -min-stars 100 --snippet --context 10`,
 	RunE: runCodeSearch,
 }
 
@@ -34,6 +36,8 @@ func init() {
 	codeCmd.Flags().StringVarP(&codeQuery, "query", "q", "", "GitHub search query (required)")
 	codeCmd.Flags().IntVarP(&codeLimit, "limit", "l", 3, "Maximum number of files to fetch")
 	codeCmd.Flags().IntVar(&codeMinStars, "min-stars", 50, "Minimum repository stars")
+	codeCmd.Flags().BoolVar(&codeSnippet, "snippet", false, "Extract relevant code snippets instead of full files")
+	codeCmd.Flags().IntVar(&codeContext, "context", 10, "Number of context lines around snippet matches")
 
 	codeCmd.MarkFlagRequired("query")
 }
@@ -48,7 +52,7 @@ func runCodeSearch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	results, err := github.SearchCode(ctx, client, codeQuery, codeLimit, codeMinStars)
+	results, err := github.SearchCode(ctx, client, codeQuery, codeLimit, codeMinStars, codeSnippet, codeContext)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return err
